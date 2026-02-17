@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { 
-  Mail, Lock, UserPlus, Pill, User, 
-  AlertCircle, CheckCircle, XCircle, Eye, 
-  EyeOff, Shield, ArrowRight 
+import {
+  Mail, Lock, UserPlus, Pill, User,
+  AlertCircle, CheckCircle, XCircle, Eye,
+  EyeOff, Shield, ArrowRight
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { validatePassword, validateEmail, validateFullName, type PasswordValidation } from '../../utils/validation';
+
+type UserRole = 'patient' | 'caretaker' | '';
+
 const Signup: React.FC = () => {
   const [formData, setFormData] = useState({
     email: '',
@@ -14,7 +17,8 @@ const Signup: React.FC = () => {
     confirmPassword: '',
     fullName: ''
   });
-  
+
+  const [selectedRole, setSelectedRole] = useState<UserRole>('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,9 +28,10 @@ const Signup: React.FC = () => {
     email: false,
     password: false,
     confirmPassword: false,
-    fullName: false
+    fullName: false,
+    role: false
   });
-  
+
   const [passwordValidation, setPasswordValidation] = useState<PasswordValidation>({
     isValid: false,
     errors: [],
@@ -36,7 +41,7 @@ const Signup: React.FC = () => {
   const [passwordMatch, setPasswordMatch] = useState(true);
   const [emailValid, setEmailValid] = useState(true);
   const [nameValid, setNameValid] = useState(true);
-  
+
   const navigate = useNavigate();
 
   // Validate password on change
@@ -76,6 +81,14 @@ const Signup: React.FC = () => {
     });
   };
 
+  const handleRoleChange = (role: UserRole) => {
+    setSelectedRole(role);
+    setTouched({
+      ...touched,
+      role: true
+    });
+  };
+
   const handleBlur = (field: string) => {
     setTouched({
       ...touched,
@@ -83,84 +96,87 @@ const Signup: React.FC = () => {
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Validate all fields
-    if (!validateFullName(formData.fullName)) {
-      setError('Please enter a valid name');
-      return;
-    }
-    
-    if (!validateEmail(formData.email)) {
-      setError('Please enter a valid email address');
-      return;
-    }
-    
-    if (!passwordValidation.isValid) {
-      setError('Please meet all password requirements');
-      return;
-    }
-    
-    if (!passwordMatch) {
-      setError('Passwords do not match');
-      return;
-    }
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    setIsLoading(true);
-    setError('');
-    setSuccess('');
+  // Validate all fields
+  if (!validateFullName(formData.fullName)) {
+    setError('Please enter a valid name');
+    return;
+  }
 
-    try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-        options: {
-          data: {
-            full_name: formData.fullName,
-          },
-          emailRedirectTo: `${window.location.origin}/login?verified=true`
-        }
-      });
+  if (!validateEmail(formData.email)) {
+    setError('Please enter a valid email address');
+    return;
+  }
 
-      if (signUpError) throw signUpError;
+  if (!selectedRole) {
+    setError('Please select whether you are a patient or caretaker');
+    return;
+  }
 
-      if (data?.user) {
-        // Try to create profile in profiles table
-        try {
-          await supabase.from('profiles').upsert([
-            {
-              id: data.user.id,
-              email: data.user.email,
-              full_name: formData.fullName,
-              created_at: new Date().toISOString()
-            }
-          ]);
-        } catch (profileErr) {
-          console.log('Profile may already exist:', profileErr);
-        }
+  if (!passwordValidation.isValid) {
+    setError('Please meet all password requirements');
+    return;
+  }
 
-        setSuccess('Account created successfully! Please check your email to verify your account.');
-        
-        // Clear form
-        setFormData({
-          email: '',
-          password: '',
-          confirmPassword: '',
-          fullName: ''
-        });
+  if (!passwordMatch) {
+    setError('Passwords do not match');
+    return;
+  }
+
+  setIsLoading(true);
+  setError('');
+  setSuccess('');
+
+  try {
+    // Sign up the user with Supabase
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: formData.email,
+      password: formData.password,
+      options: {
+        data: {
+          full_name: formData.fullName,
+          role: selectedRole
+        },
+        emailRedirectTo: `${window.location.origin}/login?verified=true`
       }
+    });
 
-    } catch (err: any) {
-      setError(err.message);
-      console.error('Signup error:', err);
-    } finally {
-      setIsLoading(false);
+    if (signUpError) throw signUpError;
+
+    if (data?.user) {
+      setSuccess('Account created successfully! Please check your email to verify your account.');
+
+      // Clear form
+      setFormData({
+        email: '',
+        password: '',
+        confirmPassword: '',
+        fullName: ''
+      });
+      setSelectedRole('');
+
+      // Redirect to login after 3 seconds
+      setTimeout(() => {
+        navigate('/login');
+      }, 3000);
     }
-  };
 
+  } catch (err: any) {
+    // Check for specific error messages
+    if (err.message?.includes('Database error saving new user')) {
+      setError('Account created but profile setup failed. Please contact support.');
+    } else {
+      setError(err.message);
+    }
+    console.error('Signup error:', err);
+  } finally {
+    setIsLoading(false);
+  }
+};
   const getStrengthColor = () => {
-    switch(passwordValidation.strength) {
+    switch (passwordValidation.strength) {
       case 'strong': return 'bg-green-500';
       case 'medium': return 'bg-yellow-500';
       default: return 'bg-red-500';
@@ -168,7 +184,7 @@ const Signup: React.FC = () => {
   };
 
   const getStrengthText = () => {
-    switch(passwordValidation.strength) {
+    switch (passwordValidation.strength) {
       case 'strong': return 'Strong password';
       case 'medium': return 'Medium password';
       default: return 'Weak password';
@@ -202,7 +218,7 @@ const Signup: React.FC = () => {
               {error}
             </div>
           )}
-          
+
           {success && (
             <div className="mb-4 bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded-lg text-sm">
               <div className="flex items-center mb-2">
@@ -239,10 +255,10 @@ const Signup: React.FC = () => {
                   onChange={handleChange}
                   onBlur={() => handleBlur('fullName')}
                   className={`block w-full pl-10 pr-10 py-3 border ${
-                    touched.fullName && !nameValid 
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    touched.fullName && !nameValid
+                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
                       : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
-                  } rounded-lg focus:outline-none focus:ring-2 transition-colors`}
+                    } rounded-lg focus:outline-none focus:ring-2 transition-colors`}
                   placeholder="John Doe"
                 />
                 {touched.fullName && (
@@ -278,10 +294,10 @@ const Signup: React.FC = () => {
                   onChange={handleChange}
                   onBlur={() => handleBlur('email')}
                   className={`block w-full pl-10 pr-10 py-3 border ${
-                    touched.email && !emailValid 
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    touched.email && !emailValid
+                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
                       : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
-                  } rounded-lg focus:outline-none focus:ring-2 transition-colors`}
+                    } rounded-lg focus:outline-none focus:ring-2 transition-colors`}
                   placeholder="you@example.com"
                 />
                 {touched.email && (
@@ -296,6 +312,55 @@ const Signup: React.FC = () => {
               </div>
               {touched.email && !emailValid && (
                 <p className="mt-1 text-xs text-red-600">Please enter a valid email address</p>
+              )}
+            </div>
+
+            {/* Role Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                I want to use MedBuddy as a: <span className="text-red-500">*</span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label
+                  className={`flex items-center justify-center p-3 border rounded-lg cursor-pointer transition-all ${
+                    selectedRole === 'patient'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value="patient"
+                    checked={selectedRole === 'patient'}
+                    onChange={() => handleRoleChange('patient')}
+                    className="sr-only"
+                  />
+                  <User className="h-4 w-4 mr-2" />
+                  <span className="text-sm font-medium">Patient</span>
+                </label>
+
+                <label
+                  className={`flex items-center justify-center p-3 border rounded-lg cursor-pointer transition-all ${
+                    selectedRole === 'caretaker'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value="caretaker"
+                    checked={selectedRole === 'caretaker'}
+                    onChange={() => handleRoleChange('caretaker')}
+                    className="sr-only"
+                  />
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  <span className="text-sm font-medium">Caretaker</span>
+                </label>
+              </div>
+              {touched.role && !selectedRole && (
+                <p className="mt-1 text-xs text-red-600">Please select a role</p>
               )}
             </div>
 
@@ -347,31 +412,31 @@ const Signup: React.FC = () => {
                     </span>
                   </div>
                   <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className={`h-full ${getStrengthColor()} transition-all duration-300`}
                       style={{ width: `${((5 - passwordValidation.errors.length) / 5) * 100}%` }}
                     />
                   </div>
-                  
+
                   {/* Password requirements */}
                   <div className="mt-2 grid grid-cols-2 gap-1">
-                    <RequirementCheck 
+                    <RequirementCheck
                       met={formData.password.length >= 8}
                       text="Min 8 characters"
                     />
-                    <RequirementCheck 
+                    <RequirementCheck
                       met={/[A-Z]/.test(formData.password)}
                       text="Uppercase letter"
                     />
-                    <RequirementCheck 
+                    <RequirementCheck
                       met={/[a-z]/.test(formData.password)}
                       text="Lowercase letter"
                     />
-                    <RequirementCheck 
+                    <RequirementCheck
                       met={/[0-9]/.test(formData.password)}
                       text="Number"
                     />
-                    <RequirementCheck 
+                    <RequirementCheck
                       met={/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(formData.password)}
                       text="Special character"
                     />
@@ -398,10 +463,10 @@ const Signup: React.FC = () => {
                   onChange={handleChange}
                   onBlur={() => handleBlur('confirmPassword')}
                   className={`block w-full pl-10 pr-20 py-3 border ${
-                    touched.confirmPassword && !passwordMatch 
-                      ? 'border-red-300 focus:ring-red-500' 
+                    touched.confirmPassword && !passwordMatch
+                      ? 'border-red-300 focus:ring-red-500'
                       : 'border-gray-300 focus:ring-blue-500'
-                  } rounded-lg focus:outline-none focus:ring-2 focus:border-transparent`}
+                    } rounded-lg focus:outline-none focus:ring-2 focus:border-transparent`}
                   placeholder="••••••••"
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
@@ -446,7 +511,7 @@ const Signup: React.FC = () => {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isLoading || !passwordValidation.isValid || !passwordMatch || !emailValid || !nameValid}
+              disabled={isLoading || !passwordValidation.isValid || !passwordMatch || !emailValid || !nameValid || !selectedRole}
               className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02]"
             >
               {isLoading ? (
@@ -468,7 +533,7 @@ const Signup: React.FC = () => {
             <p className="text-xs text-blue-700 flex items-start">
               <Shield className="h-4 w-4 mr-2 flex-shrink-0 mt-0.5" />
               <span>
-                Your password is securely hashed with bcrypt before storage. 
+                Your password is securely hashed before storage.
                 We'll never store or see your actual password.
               </span>
             </p>

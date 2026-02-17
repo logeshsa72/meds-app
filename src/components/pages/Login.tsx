@@ -21,6 +21,42 @@ const Login: React.FC = () => {
     }
   }, [location]);
 
+  // Function to get user role and redirect accordingly
+  const getUserRoleAndRedirect = async (userId: string) => {
+    try {
+      // First check if user has a role in the profiles table
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
+
+      if (profileError) {
+        console.error('Error fetching profile:', profileError);
+        // If no profile found, redirect to role selection or default dashboard
+        navigate('/dashboard');
+        return;
+      }
+
+      // Redirect based on role
+      if (profile?.role === 'patient') {
+        navigate('/patient');
+      } else if (profile?.role === 'caretaker') {
+        navigate('/caretaker');
+      } else if (profile?.role === 'both') {
+        // For users with both roles, you might want to show a selection screen
+        // or default to patient dashboard
+        navigate('/patient'); // or navigate to a role selection page
+      } else {
+        // If role is not set, redirect to dashboard or role selection
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      console.error('Error in role redirection:', err);
+      navigate('/dashboard'); // Fallback to dashboard
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -41,9 +77,11 @@ const Login: React.FC = () => {
         } else {
           throw error;
         }
-      } else {
+      } else if (data.user) {
         setSuccess('Login successful! Redirecting...');
-        setTimeout(() => navigate('/dashboard'), 1500);
+        
+        // Get user role and redirect
+        await getUserRoleAndRedirect(data.user.id);
       }
     } catch (err: any) {
       setError(err.message);
