@@ -1,5 +1,5 @@
-// components/caretaker/CaretakerDashboard.tsx (updated with real-time sync)
-import React, { useState, useEffect, useCallback } from 'react';
+// components/caretaker/CaretakerDashboard.tsx
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Pill,
@@ -93,6 +93,11 @@ const CaretakerDashboard: React.FC = () => {
   const [editingCell, setEditingCell] = useState<{rowId: string, field: string} | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [savingRow, setSavingRow] = useState<string | null>(null);
+  const [pendingSave, setPendingSave] = useState<{rowId: string, field: string, value: string} | null>(null);
+
+  // Refs for focus management
+  const inputRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(null);
+  const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
 
   // Stats
   const [stats, setStats] = useState<Stats>({
@@ -320,6 +325,93 @@ const CaretakerDashboard: React.FC = () => {
     };
   }, [user, medications]);
 
+  // Process pending saves
+  useEffect(() => {
+    const processPendingSave = async () => {
+      if (!pendingSave || !user) return;
+
+      const { rowId, field, value } = pendingSave;
+      
+      // Update local state immediately
+      setMedicationRows(prev => 
+        prev.map(row => {
+          if (row.id === rowId) {
+            return { ...row, [field]: value };
+          }
+          return row;
+        })
+      );
+
+      // If it's a new row and all required fields are filled, save to database
+      const row = medicationRows.find(r => r.id === rowId);
+      if (row?.isNew && (field === 'name' || field === 'dosage' || field === 'time')) {
+        const updatedRow = { ...row, [field]: value };
+        const requiredFields = ['name', 'dosage', 'time'];
+        const allRequiredFilled = requiredFields.every(f => updatedRow[f as keyof MedicationRow]);
+        
+        if (allRequiredFilled && user) {
+          setSavingRow(rowId);
+          try {
+            const newMedication = await addMedication({
+              user_id: user.id,
+              name: updatedRow.name,
+              dosage: updatedRow.dosage,
+              frequency: updatedRow.frequency,
+              time: updatedRow.time,
+              type: updatedRow.type,
+              notes: updatedRow.notes || null,
+              refill_date: updatedRow.refill_date || null
+            });
+
+            // Replace temporary ID with real ID
+            setMedicationRows(prev => 
+              prev.map(r => r.id === rowId ? { 
+                ...r, 
+                id: newMedication.id,
+                isNew: false
+              } : r)
+            );
+
+            showSuccess('Medication added successfully');
+            
+            // Reload data to get fresh status
+            await loadData();
+          } catch (error) {
+            console.error('Error saving medication:', error);
+            showError('Failed to save medication');
+          } finally {
+            setSavingRow(null);
+          }
+        }
+      } else if (!row?.isNew && user) {
+        // Update existing medication in database
+        setSavingRow(rowId);
+        try {
+          await updateMedication(rowId, {
+            [field]: value
+          });
+          showSuccess('Medication updated');
+        } catch (error) {
+          console.error('Error updating medication:', error);
+          showError('Failed to update medication');
+        } finally {
+          setSavingRow(null);
+        }
+      }
+
+      setPendingSave(null);
+    };
+
+    processPendingSave();
+  }, [pendingSave, user, medicationRows]);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingCell && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [editingCell]);
+
   // ==================== MEDICATION CRUD ====================
 
   const addNewRow = (): void => {
@@ -341,6 +433,9 @@ const CaretakerDashboard: React.FC = () => {
   };
 
   const handleCellClick = (rowId: string, field: string, currentValue: string): void => {
+    // Don't allow editing while saving
+    if (savingRow === rowId) return;
+    
     setEditingCell({ rowId, field });
     setEditValue(currentValue || '');
   };
@@ -349,73 +444,100 @@ const CaretakerDashboard: React.FC = () => {
     setEditValue(e.target.value);
   };
 
-  const handleCellBlur = async (rowId: string, field: string): Promise<void> => {
+  const saveCell = (rowId: string, field: string, value: string): void => {
+    setPendingSave({ rowId, field, value });
+  };
+
+  const handleCellBlur = (): void => {
     if (!editingCell) return;
-
-    const updatedRows = medicationRows.map(row => {
-      if (row.id === rowId) {
-        return { ...row, [field]: editValue };
-      }
-      return row;
-    });
-
-    setMedicationRows(updatedRows);
+    
+    const { rowId, field } = editingCell;
+    
+    // Only save if value changed
+    const currentRow = medicationRows.find(r => r.id === rowId);
+    if (currentRow && currentRow[field as keyof MedicationRow] !== editValue) {
+      saveCell(rowId, field, editValue);
+    }
+    
     setEditingCell(null);
     setEditValue('');
-
-    // If it's a new row and all required fields are filled, save to database
-    const row = updatedRows.find(r => r.id === rowId);
-    if (row?.isNew && row.name && row.dosage && row.time && user) {
-      setSavingRow(rowId);
-      try {
-        const newMedication = await addMedication({
-          user_id: user.id,
-          name: row.name,
-          dosage: row.dosage,
-          frequency: row.frequency,
-          time: row.time,
-          type: row.type,
-          notes: row.notes || null,
-          refill_date: row.refill_date || null
-        });
-
-        // Replace temporary ID with real ID
-        setMedicationRows(prev => 
-          prev.map(r => r.id === rowId ? { 
-            ...r, 
-            id: newMedication.id,
-            isNew: false
-          } : r)
-        );
-
-        showSuccess('Medication added successfully');
-        
-        // Reload data to get fresh status
-        await loadData();
-      } catch (error) {
-        console.error('Error saving medication:', error);
-        showError('Failed to save medication');
-      } finally {
-        setSavingRow(null);
-      }
-    } else if (!row?.isNew && user) {
-      // Update existing medication in database
-      try {
-        await updateMedication(rowId, {
-          [field]: editValue
-        });
-        showSuccess('Medication updated');
-      } catch (error) {
-        console.error('Error updating medication:', error);
-        showError('Failed to update medication');
-      }
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, rowId: string, field: string): void => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleCellBlur(rowId, field);
+      handleCellBlur();
+      
+      // Find next cell to edit (down arrow behavior)
+      setTimeout(() => {
+        const rows = filteredRows;
+        const currentIndex = rows.findIndex(r => r.id === rowId);
+        if (currentIndex < rows.length - 1) {
+          const nextRow = rows[currentIndex + 1];
+          const nextCellId = `cell-${nextRow.id}-${field}`;
+          const nextCell = cellRefs.current.get(nextCellId);
+          if (nextCell) {
+            nextCell.click();
+          }
+        }
+      }, 10);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      handleCellBlur();
+      
+      // Find next cell in the same row
+      setTimeout(() => {
+        const fields: (keyof MedicationRow)[] = ['name', 'dosage', 'frequency', 'time', 'type'];
+        const currentFieldIndex = fields.indexOf(field as keyof MedicationRow);
+        
+        if (e.shiftKey) {
+          // Shift+Tab: move to previous field
+          if (currentFieldIndex > 0) {
+            const prevField = fields[currentFieldIndex - 1];
+            const prevCellId = `cell-${rowId}-${prevField}`;
+            const prevCell = cellRefs.current.get(prevCellId);
+            if (prevCell) {
+              prevCell.click();
+            }
+          } else {
+            // Move to previous row's last field
+            const rows = filteredRows;
+            const currentIndex = rows.findIndex(r => r.id === rowId);
+            if (currentIndex > 0) {
+              const prevRow = rows[currentIndex - 1];
+              const prevField = fields[fields.length - 1];
+              const prevCellId = `cell-${prevRow.id}-${prevField}`;
+              const prevCell = cellRefs.current.get(prevCellId);
+              if (prevCell) {
+                prevCell.click();
+              }
+            }
+          }
+        } else {
+          // Tab: move to next field
+          if (currentFieldIndex < fields.length - 1) {
+            const nextField = fields[currentFieldIndex + 1];
+            const nextCellId = `cell-${rowId}-${nextField}`;
+            const nextCell = cellRefs.current.get(nextCellId);
+            if (nextCell) {
+              nextCell.click();
+            }
+          } else {
+            // Move to next row's first field
+            const rows = filteredRows;
+            const currentIndex = rows.findIndex(r => r.id === rowId);
+            if (currentIndex < rows.length - 1) {
+              const nextRow = rows[currentIndex + 1];
+              const nextField = fields[0];
+              const nextCellId = `cell-${nextRow.id}-${nextField}`;
+              const nextCell = cellRefs.current.get(nextCellId);
+              if (nextCell) {
+                nextCell.click();
+              }
+            }
+          }
+        }
+      }, 10);
     } else if (e.key === 'Escape') {
       setEditingCell(null);
       setEditValue('');
@@ -506,6 +628,7 @@ const CaretakerDashboard: React.FC = () => {
   const renderCell = (row: MedicationRow, field: string, value: string, placeholder: string = ''): React.ReactNode => {
     const isEditing = editingCell?.rowId === row.id && editingCell.field === field;
     const isSaving = savingRow === row.id;
+    const cellId = `cell-${row.id}-${field}`;
     
     if (isSaving) {
       return (
@@ -520,9 +643,10 @@ const CaretakerDashboard: React.FC = () => {
       if (field === 'frequency') {
         return (
           <select
+            ref={inputRef as React.RefObject<HTMLSelectElement>}
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             autoFocus
@@ -538,9 +662,10 @@ const CaretakerDashboard: React.FC = () => {
       } else if (field === 'type') {
         return (
           <select
+            ref={inputRef as React.RefObject<HTMLSelectElement>}
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             autoFocus
@@ -558,9 +683,10 @@ const CaretakerDashboard: React.FC = () => {
       } else if (field === 'notes') {
         return (
           <textarea
+            ref={inputRef as React.RefObject<HTMLTextAreaElement>}
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             rows={2}
@@ -571,10 +697,11 @@ const CaretakerDashboard: React.FC = () => {
       } else if (field === 'refill_date') {
         return (
           <input
+            ref={inputRef as React.RefObject<HTMLInputElement>}
             type="date"
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             autoFocus
@@ -583,10 +710,11 @@ const CaretakerDashboard: React.FC = () => {
       } else if (field === 'time') {
         return (
           <input
+            ref={inputRef as React.RefObject<HTMLInputElement>}
             type="text"
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             placeholder="e.g., 08:00, 20:00"
@@ -596,10 +724,11 @@ const CaretakerDashboard: React.FC = () => {
       } else {
         return (
           <input
+            ref={inputRef as React.RefObject<HTMLInputElement>}
             type="text"
             value={editValue}
             onChange={handleCellChange}
-            onBlur={() => handleCellBlur(row.id, field)}
+            onBlur={handleCellBlur}
             onKeyDown={(e) => handleKeyDown(e, row.id, field)}
             className="w-full px-2 py-1 border-2 border-blue-500 rounded-lg focus:outline-none bg-white shadow-sm"
             placeholder={placeholder}
@@ -618,27 +747,43 @@ const CaretakerDashboard: React.FC = () => {
       };
       
       return (
-        <div 
+        <td 
+          ref={el => {
+            if (el) {
+              cellRefs.current.set(cellId, el);
+            } else {
+              cellRefs.current.delete(cellId);
+            }
+          }}
           onClick={() => handleCellClick(row.id, field, value)}
-          className={`flex items-center space-x-2 cursor-text group ${!value ? 'text-gray-400' : ''}`}
+          className={`px-6 py-4 cursor-text group hover:bg-gray-50 transition-colors ${!value ? 'text-gray-400' : ''}`}
         >
-          <span className={`font-medium ${statusColors[row.status] || ''}`}>
-            {value || placeholder}
-          </span>
-          {row.isNew && (
-            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full">New</span>
-          )}
-        </div>
+          <div className="flex items-center space-x-2">
+            <span className={`font-medium ${statusColors[row.status] || ''}`}>
+              {value || placeholder}
+            </span>
+            {row.isNew && (
+              <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full">New</span>
+            )}
+          </div>
+        </td>
       );
     }
     
     return (
-      <div 
+      <td
+        ref={el => {
+          if (el) {
+            cellRefs.current.set(cellId, el);
+          } else {
+            cellRefs.current.delete(cellId);
+          }
+        }}
         onClick={() => handleCellClick(row.id, field, value)}
-        className={`cursor-text group hover:bg-gray-50 p-1 rounded ${!value ? 'text-gray-400' : ''}`}
+        className={`px-6 py-4 cursor-text group hover:bg-gray-50 transition-colors ${!value ? 'text-gray-400' : ''}`}
       >
         {field === 'time' && value ? formatTime(value) : value || placeholder}
-      </div>
+      </td>
     );
   };
 
@@ -962,7 +1107,7 @@ const CaretakerDashboard: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-gray-900">Medications</h3>
-                    <p className="text-sm text-gray-500">Click any cell to edit • Real-time updates</p>
+                    <p className="text-sm text-gray-500">Click any cell to edit • Use Tab/Enter to navigate • Real-time updates</p>
                   </div>
                 </div>
 
@@ -1049,21 +1194,11 @@ const CaretakerDashboard: React.FC = () => {
                         <td className="px-6 py-4 whitespace-nowrap">
                           {getStatusBadge(row.status, row.takenTimes)}
                         </td>
-                        <td className="px-6 py-4">
-                          {renderCell(row, 'name', row.name, 'Enter medication name')}
-                        </td>
-                        <td className="px-6 py-4">
-                          {renderCell(row, 'dosage', row.dosage, 'e.g., 10mg')}
-                        </td>
-                        <td className="px-6 py-4">
-                          {renderCell(row, 'frequency', row.frequency, 'Frequency')}
-                        </td>
-                        <td className="px-6 py-4">
-                          {renderCell(row, 'time', row.time, '08:00')}
-                        </td>
-                        <td className="px-6 py-4">
-                          {renderCell(row, 'type', row.type, 'Type')}
-                        </td>
+                        {renderCell(row, 'name', row.name, 'Enter medication name')}
+                        {renderCell(row, 'dosage', row.dosage, 'e.g., 10mg')}
+                        {renderCell(row, 'frequency', row.frequency, 'Frequency')}
+                        {renderCell(row, 'time', row.time, '08:00')}
+                        {renderCell(row, 'type', row.type, 'Type')}
                         <td className="px-6 py-4">
                           {row.lastTaken ? (
                             <span className="text-sm text-gray-600">{row.lastTaken}</span>

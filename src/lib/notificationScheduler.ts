@@ -15,6 +15,12 @@ export const startNotificationScheduler = () => {
   }, 5 * 60 * 1000); // 5 minutes
 
   console.log('✅ Notification scheduler started');
+  
+  // Run immediately
+  setTimeout(async () => {
+    console.log('🚀 Running initial check...');
+    await checkAndSendMissedMedicationEmails();
+  }, 5000);
 };
 
 export const stopNotificationScheduler = () => {
@@ -23,10 +29,4 @@ export const stopNotificationScheduler = () => {
     intervalId = null;
     console.log('🛑 Notification scheduler stopped');
   }
-};
-
-// Run immediately on start
-export const runInitialCheck = async () => {
-  console.log('🚀 Running initial missed medication check...');
-  await checkAndSendMissedMedicationEmails();
 };

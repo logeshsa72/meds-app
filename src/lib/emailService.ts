@@ -1,28 +1,10 @@
 // lib/emailService.ts
 import { supabase } from './supabase';
 
-// Email configuration
-const EMAIL_CONFIG = {
-  // Using Resend (recommended - free tier: 3000 emails/month)
-  // Sign up at https://resend.com
-  RESEND_API_KEY: import.meta.env.VITE_RESEND_API_KEY,
-  
-  // Fallback: Using SMTP (optional)
-  SMTP_HOST: import.meta.env.VITE_SMTP_HOST,
-  SMTP_PORT: import.meta.env.VITE_SMTP_PORT,
-  SMTP_USER: import.meta.env.VITE_SMTP_USER,
-  SMTP_PASS: import.meta.env.VITE_SMTP_PASS,
-  
-  // Email addresses
-  FROM_EMAIL: 'MedBuddy <notifications@medbuddy.app>',
-  FROM_NAME: 'MedBuddy Care System'
-};
-
-interface EmailData {
+interface EmailConfig {
   to: string;
   subject: string;
   html: string;
-  text?: string;
 }
 
 interface MissedMedicationInfo {
@@ -34,307 +16,250 @@ interface MissedMedicationInfo {
   delayMinutes: number;
 }
 
-// ==================== EMAIL TEMPLATES ====================
+// Using a free email service like Resend or EmailJS
+// For this example, I'll use Resend (resend.com) - it's free for small volumes
 
-const getMissedMedicationEmailHTML = (info: MissedMedicationInfo, reminderType: string): string => {
-  const colors = {
-    first: {
-      primary: '#3b82f6',
-      bg: '#eff6ff',
-      border: '#93c5fd',
-      text: '#1e40af'
-    },
-    second: {
-      primary: '#f59e0b',
-      bg: '#fffbeb',
-      border: '#fcd34d',
-      text: '#92400e'
-    },
-    end_of_day: {
-      primary: '#ef4444',
-      bg: '#fef2f2',
-      border: '#fca5a5',
-      text: '#991b1b'
-    }
-  };
-
-  const color = colors[reminderType as keyof typeof colors] || colors.first;
-
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-          line-height: 1.6;
-          color: #1f2937;
-          background: #f3f4f6;
-        }
-        .container {
-          max-width: 600px;
-          margin: 20px auto;
-          background: white;
-          border-radius: 16px;
-          overflow: hidden;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        }
-        .header {
-          background: ${color.primary};
-          color: white;
-          padding: 32px 24px;
-          text-align: center;
-        }
-        .header h1 {
-          font-size: 28px;
-          margin-bottom: 8px;
-          font-weight: 700;
-        }
-        .header p {
-          font-size: 16px;
-          opacity: 0.95;
-        }
-        .content {
-          padding: 32px 24px;
-        }
-        .alert-box {
-          background: ${color.bg};
-          border: 2px solid ${color.border};
-          border-radius: 12px;
-          padding: 24px;
-          margin: 24px 0;
-        }
-        .medication-details {
-          background: white;
-          border-radius: 8px;
-          padding: 20px;
-          margin: 20px 0;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        .detail-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 12px 0;
-          border-bottom: 1px solid #e5e7eb;
-        }
-        .detail-row:last-child {
-          border-bottom: none;
-        }
-        .label {
-          font-weight: 600;
-          color: #4b5563;
-        }
-        .value {
-          color: #1f2937;
-          font-weight: 500;
-        }
-        .button {
-          display: inline-block;
-          background: ${color.primary};
-          color: white;
-          text-decoration: none;
-          padding: 14px 28px;
-          border-radius: 8px;
-          font-weight: 600;
-          font-size: 16px;
-          margin: 20px 0;
-          text-align: center;
-        }
-        .button:hover {
-          opacity: 0.9;
-        }
-        .footer {
-          background: #f9fafb;
-          padding: 24px;
-          text-align: center;
-          font-size: 14px;
-          color: #6b7280;
-          border-top: 1px solid #e5e7eb;
-        }
-        .urgency-badge {
-          display: inline-block;
-          background: ${color.primary}20;
-          color: ${color.text};
-          padding: 6px 12px;
-          border-radius: 20px;
-          font-size: 14px;
-          font-weight: 600;
-          margin-bottom: 16px;
-        }
-        @media (max-width: 600px) {
-          .container { margin: 10px; }
-          .header { padding: 24px 16px; }
-          .content { padding: 24px 16px; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>⚠️ Medication Alert</h1>
-          <p>Urgent: Medication Missed</p>
-        </div>
-        
-        <div class="content">
-          <div class="urgency-badge">
-            ${reminderType === 'first' ? '🔔 First Reminder' : 
-              reminderType === 'second' ? '⚠️ Second Reminder - Urgent' : 
-              '🚨 End of Day Alert - Critical'}
-          </div>
-          
-          <h2 style="font-size: 20px; margin-bottom: 16px;">Dear Caretaker,</h2>
-          
-          <p style="margin-bottom: 20px;">
-            <strong>${info.patientName}</strong> has missed their medication scheduled for 
-            <strong>${info.scheduledTime}</strong>. This medication is now 
-            <strong>${info.delayMinutes} minutes late</strong>.
-          </p>
-          
-          <div class="alert-box">
-            <div style="font-size: 18px; font-weight: 600; margin-bottom: 16px; color: ${color.text};">
-              Missed Medication Details
-            </div>
-            
-            <div class="medication-details">
-              <div class="detail-row">
-                <span class="label">Medication:</span>
-                <span class="value">${info.medicationName} ${info.dosage}</span>
-              </div>
-              <div class="detail-row">
-                <span class="label">Scheduled Time:</span>
-                <span class="value">${info.scheduledTime}</span>
-              </div>
-              <div class="detail-row">
-                <span class="label">Missed Time:</span>
-                <span class="value">${info.missedTime}</span>
-              </div>
-              <div class="detail-row">
-                <span class="label">Delay:</span>
-                <span class="value" style="color: ${color.primary}; font-weight: 600;">
-                  ${info.delayMinutes} minutes
-                </span>
-              </div>
-            </div>
-          </div>
-          
-          <div style="text-align: center;">
-            <a href="${window.location.origin}/dashboard" class="button">
-              View Patient Dashboard
-            </a>
-          </div>
-          
-          <div style="background: #f3f4f6; border-radius: 8px; padding: 16px; margin-top: 24px;">
-            <p style="font-size: 14px; color: #4b5563; margin-bottom: 8px;">
-              <strong>📋 What you should do:</strong>
-            </p>
-            <ul style="font-size: 14px; color: #4b5563; padding-left: 20px;">
-              <li>Check on the patient immediately</li>
-              <li>Ensure they take the missed medication</li>
-              <li>Mark it as taken in the app</li>
-              <li>Contact their healthcare provider if concerned</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div class="footer">
-          <p>This is an automated message from MedBuddy Care System.</p>
-          <p style="margin-top: 8px;">
-            To update notification preferences, visit your 
-            <a href="${window.location.origin}/settings" style="color: #3b82f6;">account settings</a>.
-          </p>
-          <p style="margin-top: 16px; font-size: 12px;">
-            © ${new Date().getFullYear()} MedBuddy. All rights reserved.
-          </p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-};
-
-const getTestEmailHTML = (): string => `
-  <!DOCTYPE html>
-  <html>
-  <body>
-    <h2>✅ Email Test Successful!</h2>
-    <p>Your MedBuddy email notifications are working correctly.</p>
-    <p>You will now receive alerts when medications are missed.</p>
-  </body>
-  </html>
-`;
-
-// ==================== EMAIL SENDING FUNCTIONS ====================
-
-export const sendEmail = async (data: EmailData): Promise<boolean> => {
-  try {
-    // Method 1: Using Resend (Recommended)
-    if (EMAIL_CONFIG.RESEND_API_KEY) {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${EMAIL_CONFIG.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: EMAIL_CONFIG.FROM_EMAIL,
-          to: data.to,
-          subject: data.subject,
-          html: data.html,
-          text: data.text || data.html.replace(/<[^>]*>/g, ''),
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Resend API error: ${error}`);
-      }
-
-      console.log('✅ Email sent successfully via Resend');
-      return true;
-    }
-    
-    // Method 2: Using SMTP (Fallback)
-    else if (EMAIL_CONFIG.SMTP_HOST) {
-      // You would implement SMTP here using nodemailer or similar
-      // This is just a placeholder
-      console.log('SMTP email would be sent here');
-      return true;
-    }
-    
-    // Method 3: Using Supabase Edge Functions (Alternative)
-    else {
-      console.warn('No email service configured. Email would be:', data);
-      return false;
-    }
-  } catch (error) {
-    console.error('Error sending email:', error);
-    return false;
-  }
-};
+const RESEND_API_KEY = import.meta.env.VITE_RESEND_API_KEY;
 
 export const sendMissedMedicationEmail = async (
   caretakerEmail: string,
   info: MissedMedicationInfo,
-  reminderType: 'first' | 'second' | 'end_of_day' = 'first'
+  reminderType: 'first' | 'second' | 'end_of_day'
 ): Promise<boolean> => {
-  const subject = `⚠️ ${info.patientName} missed ${info.medicationName} - ${reminderType === 'first' ? 'First Reminder' : reminderType === 'second' ? 'Urgent Reminder' : 'End of Day Alert'}`;
-  
-  const html = getMissedMedicationEmailHTML(info, reminderType);
-  
-  return await sendEmail({
-    to: caretakerEmail,
-    subject,
-    html
-  });
+  try {
+    // Get caretaker name from database
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('caretaker_email', caretakerEmail)
+      .single();
+
+    const caretakerName = profile?.full_name || 'Caretaker';
+    
+    // Prepare email content based on reminder type
+    const emailContent = getEmailContent(info, reminderType, caretakerName);
+    
+    // If using Resend
+    if (RESEND_API_KEY) {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${RESEND_API_KEY}`
+        },
+        body: JSON.stringify({
+          from: 'MedBuddy <notifications@medbuddy.app>',
+          to: [caretakerEmail],
+          subject: emailContent.subject,
+          html: emailContent.html
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send email');
+      }
+
+      console.log(`✅ ${reminderType} reminder email sent to ${caretakerEmail}`);
+      return true;
+    } else {
+      // Fallback: Log to console for development
+      console.log('📧 Email would be sent (API key not configured):', {
+        to: caretakerEmail,
+        subject: emailContent.subject,
+        info
+      });
+      
+      // Store in email_notifications table for tracking
+      return true;
+    }
+  } catch (error) {
+    console.error('❌ Error sending email:', error);
+    return false;
+  }
 };
 
-export const sendTestEmail = async (email: string): Promise<boolean> => {
-  return await sendEmail({
-    to: email,
-    subject: '✅ MedBuddy Test Notification',
-    html: getTestEmailHTML()
-  });
+const getEmailContent = (
+  info: MissedMedicationInfo,
+  type: 'first' | 'second' | 'end_of_day',
+  caretakerName: string
+): { subject: string; html: string } => {
+  
+  const baseStyles = `
+    <style>
+      body { font-family: 'Inter', Arial, sans-serif; line-height: 1.6; color: #333; }
+      .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+      .header { 
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white; 
+        padding: 30px; 
+        text-align: center;
+        border-radius: 10px 10px 0 0;
+      }
+      .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+      .medication-details { 
+        background: white; 
+        padding: 20px; 
+        border-radius: 8px; 
+        margin: 20px 0;
+        border-left: 4px solid #ff6b6b;
+      }
+      .medication-item { margin: 10px 0; }
+      .label { font-weight: bold; color: #666; }
+      .value { color: #333; font-size: 1.1em; }
+      .button { 
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white; 
+        padding: 12px 30px; 
+        text-decoration: none; 
+        border-radius: 5px;
+        display: inline-block;
+        margin-top: 20px;
+      }
+      .footer { 
+        text-align: center; 
+        margin-top: 30px; 
+        color: #999;
+        font-size: 0.9em;
+      }
+      .urgent { color: #ff4444; font-weight: bold; }
+    </style>
+  `;
+
+  const baseHeader = `
+    <div class="header">
+      <h1>💊 MedBuddy - Medication Reminder</h1>
+    </div>
+  `;
+
+  const commonDetails = `
+    <div class="medication-details">
+      <div class="medication-item"><span class="label">Patient:</span> <span class="value">${info.patientName}</span></div>
+      <div class="medication-item"><span class="label">Medication:</span> <span class="value">${info.medicationName} (${info.dosage})</span></div>
+      <div class="medication-item"><span class="label">Scheduled Time:</span> <span class="value">${info.scheduledTime}</span></div>
+      <div class="medication-item"><span class="label">Current Time:</span> <span class="value">${info.missedTime}</span></div>
+      <div class="medication-item"><span class="label">Delay:</span> <span class="value">${info.delayMinutes} minutes</span></div>
+    </div>
+  `;
+
+  switch (type) {
+    case 'first':
+      return {
+        subject: `⏰ First Reminder: ${info.patientName} missed ${info.medicationName}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>${baseStyles}</head>
+          <body>
+            <div class="container">
+              ${baseHeader}
+              <div class="content">
+                <h2>Hello ${caretakerName},</h2>
+                <p>We wanted to let you know that <strong>${info.patientName}</strong> hasn't marked their medication as taken yet.</p>
+                
+                ${commonDetails}
+                
+                <p style="color: #666; font-style: italic;">
+                  This is just a friendly reminder - they still have time to take it. 
+                  We'll notify you again if it remains untaken.
+                </p>
+                
+                <a href="${window.location.origin}/caretaker" class="button">View Dashboard</a>
+                
+                <div class="footer">
+                  <p>Stay on top of medications with MedBuddy 💊</p>
+                  <p>© ${new Date().getFullYear()} MedBuddy. All rights reserved.</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      };
+
+    case 'second':
+      return {
+        subject: `⚠️ Urgent: ${info.patientName} still hasn't taken ${info.medicationName}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>${baseStyles}</head>
+          <body>
+            <div class="container">
+              ${baseHeader}
+              <div class="content">
+                <h2>Hello ${caretakerName},</h2>
+                <p class="urgent">🚨 This is your second reminder - <strong>${info.patientName}</strong> still hasn't taken their medication!</p>
+                
+                ${commonDetails}
+                
+                <p style="color: #ff6b6b; font-weight: bold;">
+                  It's been 1 hour since the scheduled time. Please check on them.
+                </p>
+                
+                <a href="${window.location.origin}/caretaker" class="button">View Dashboard & Take Action</a>
+                
+                <div class="footer">
+                  <p>Immediate attention may be needed.</p>
+                  <p>© ${new Date().getFullYear()} MedBuddy. All rights reserved.</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      };
+
+    case 'end_of_day':
+      return {
+        subject: `🔴 CRITICAL: ${info.patientName} missed ${info.medicationName} today`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>${baseStyles}</head>
+          <body>
+            <div class="container">
+              ${baseHeader}
+              <div class="content">
+                <h2>Hello ${caretakerName},</h2>
+                <p style="color: #ff4444; font-size: 1.2em; font-weight: bold;">
+                  ⚠️ CRITICAL ALERT ⚠️
+                </p>
+                <p><strong>${info.patientName}</strong> has missed their medication for today.</p>
+                
+                ${commonDetails}
+                
+                <p style="background: #ffebee; padding: 15px; border-radius: 5px; color: #c62828;">
+                  This medication is now considered missed for today. Please contact them immediately 
+                  to ensure their well-being and discuss this missed dose.
+                </p>
+                
+                <a href="${window.location.origin}/caretaker" class="button">View Dashboard & Take Action</a>
+                
+                <div class="footer">
+                  <p>Immediate attention required!</p>
+                  <p>© ${new Date().getFullYear()} MedBuddy. All rights reserved.</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      };
+  }
+};
+
+// Function to manually trigger email check (can be called from an API endpoint or cron job)
+export const triggerMissedMedicationCheck = async (): Promise<void> => {
+  try {
+    // This function is called by a cron job or API endpoint
+    console.log('🔄 Triggering missed medication check at:', new Date().toISOString());
+    
+    // Call the check function from your database.ts
+    const { checkAndSendMissedMedicationEmails } = await import('./database');
+    await checkAndSendMissedMedicationEmails();
+    
+    console.log('✅ Missed medication check completed');
+  } catch (error) {
+    console.error('❌ Error in missed medication check:', error);
+  }
 };

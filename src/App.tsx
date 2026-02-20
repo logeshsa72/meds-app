@@ -13,6 +13,7 @@ const isAuthenticated: boolean = true;
 const userRole: UserRole = 'both';
 
 function App() {
+  
   const getDashboardRoute = (): string => {
     if (userRole === 'patient') return '/patient';
     if (userRole === 'caretaker') return '/caretaker';

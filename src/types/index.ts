@@ -15,8 +15,8 @@ export interface Medication {
   frequency: string;
   time: string;
   type: string;
-  notes: string | null;
-  refill_date: string | null;
+  notes?: string | null;  // Make optional
+  refill_date?: string | null;  // Make optional
   created_at: string;
 }
 
